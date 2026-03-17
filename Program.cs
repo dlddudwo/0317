@@ -3439,6 +3439,93 @@ namespace AMI_Manager.Forms.Main
             return true;
         }
 
+        private static string BuildInspectionLookupKey(string serialNumber, string inspectionDate, string inspectionTime, string vpNumber)
+        {
+            return string.Join("|",
+                (serialNumber ?? string.Empty).Trim(),
+                (inspectionDate ?? string.Empty).Trim(),
+                (inspectionTime ?? string.Empty).Trim(),
+                (vpNumber ?? string.Empty).Trim());
+        }
+
+        private static string BuildInspectionGroupKey(string serialNumber, string inspectionDate, string vpNumber)
+        {
+            return string.Join("|",
+                (serialNumber ?? string.Empty).Trim(),
+                (inspectionDate ?? string.Empty).Trim(),
+                (vpNumber ?? string.Empty).Trim());
+        }
+
+        private bool TryParseInspectionTimeToSeconds(string value, out int seconds)
+        {
+            seconds = 0;
+            string normalized = NormalizeTimeTokenToHHMMSS(value);
+            if (!IsValidHHMMSS(normalized))
+            {
+                return false;
+            }
+
+            int hh;
+            int mm;
+            int ss;
+            if (!int.TryParse(normalized.Substring(0, 2), out hh)
+                || !int.TryParse(normalized.Substring(2, 2), out mm)
+                || !int.TryParse(normalized.Substring(4, 2), out ss))
+            {
+                return false;
+            }
+
+            seconds = (hh * 3600) + (mm * 60) + ss;
+            return true;
+        }
+
+        private bool TryFindNearestInspectionIndex(List<int> candidates, string selectedInspectionTime, out int inspectionIndex)
+        {
+            inspectionIndex = -1;
+            if (candidates == null || candidates.Count == 0)
+            {
+                return false;
+            }
+
+            int selectedSeconds;
+            if (!TryParseInspectionTimeToSeconds(selectedInspectionTime, out selectedSeconds))
+            {
+                return false;
+            }
+
+            int bestDiff = int.MaxValue;
+            int bestIndex = -1;
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                int candidateIndex = candidates[i];
+                if (candidateIndex < 0 || candidateIndex >= inspectionDataList.Count)
+                {
+                    continue;
+                }
+
+                int candidateSeconds;
+                if (!TryParseInspectionTimeToSeconds(inspectionDataList[candidateIndex].InspectionTime, out candidateSeconds))
+                {
+                    continue;
+                }
+
+                int diff = Math.Abs(candidateSeconds - selectedSeconds);
+                if (diff < bestDiff)
+                {
+                    bestDiff = diff;
+                    bestIndex = candidateIndex;
+                }
+            }
+
+            if (bestIndex < 0)
+            {
+                return false;
+            }
+
+            inspectionIndex = bestIndex;
+            return true;
+        }
+
         private static void ReleaseComObjectIfNeeded(object comObject)
         {
             if (comObject != null && Marshal.IsComObject(comObject))
@@ -3505,14 +3592,34 @@ namespace AMI_Manager.Forms.Main
 
                     Row_num++;
 
-                    Dictionary<string, int> inspectionIndexBySerial = new Dictionary<string, int>(StringComparer.Ordinal);
+                    Dictionary<string, int> inspectionIndexByPanel = new Dictionary<string, int>(StringComparer.Ordinal);
+                    Dictionary<string, List<int>> inspectionIndexesByPanelGroup = new Dictionary<string, List<int>>(StringComparer.Ordinal);
                     for (int i = 0; i < inspectionDataList.Count; i++)
                     {
-                        string serial = inspectionDataList[i].SerialNumber;
-                        if (!inspectionIndexBySerial.ContainsKey(serial))
+                        InspectionData inspectionData = inspectionDataList[i];
+                        string lookupKey = BuildInspectionLookupKey(
+                            inspectionData.SerialNumber,
+                            inspectionData.InspectionDate,
+                            inspectionData.InspectionTime,
+                            inspectionData.Vpnum);
+
+                        if (!inspectionIndexByPanel.ContainsKey(lookupKey))
                         {
-                            inspectionIndexBySerial.Add(serial, i);
+                            inspectionIndexByPanel.Add(lookupKey, i);
                         }
+
+                        string groupKey = BuildInspectionGroupKey(
+                            inspectionData.SerialNumber,
+                            inspectionData.InspectionDate,
+                            inspectionData.Vpnum);
+
+                        List<int> indexes;
+                        if (!inspectionIndexesByPanelGroup.TryGetValue(groupKey, out indexes))
+                        {
+                            indexes = new List<int>();
+                            inspectionIndexesByPanelGroup.Add(groupKey, indexes);
+                        }
+                        indexes.Add(i);
                     }
 
                     //패널별로 반복문
@@ -3525,6 +3632,8 @@ namespace AMI_Manager.Forms.Main
                             System.Windows.Forms.ListViewItem selectedItem_info = LV_PANEL_LIST.SelectedItems[panel_num]; // 첫 번째 선택된 항목 접근
                             select_pid = selectedItem_info.SubItems[1].Text.ToString();  //시리얼 넘버 접근
                             vpnumber = selectedItem_info.SubItems[6].Text.ToString();  //시리얼 넘버 접근
+                            string inspectionDate = selectedItem_info.SubItems.Count > 2 ? selectedItem_info.SubItems[2].Text : string.Empty;
+                            string inspectionTime = selectedItem_info.SubItems.Count > 3 ? selectedItem_info.SubItems[3].Text : string.Empty;
 
                             int totalDefectCountForPanel = 0;
                             if (View_mode == 1)
@@ -3552,9 +3661,16 @@ namespace AMI_Manager.Forms.Main
                             int completedDefectCountForPanel = 0;
 
                             int inspectionIndex;
-                            if (!inspectionIndexBySerial.TryGetValue(select_pid, out inspectionIndex))
+                            string selectedPanelKey = BuildInspectionLookupKey(select_pid, inspectionDate, inspectionTime, vpnumber);
+                            if (!inspectionIndexByPanel.TryGetValue(selectedPanelKey, out inspectionIndex))
                             {
-                                continue;
+                                string selectedGroupKey = BuildInspectionGroupKey(select_pid, inspectionDate, vpnumber);
+                                List<int> candidateIndexes;
+                                if (!inspectionIndexesByPanelGroup.TryGetValue(selectedGroupKey, out candidateIndexes)
+                                    || !TryFindNearestInspectionIndex(candidateIndexes, inspectionTime, out inspectionIndex))
+                                {
+                                    continue;
+                                }
                             }
 
                             insp_info.listview_index = inspectionIndex;
@@ -3569,9 +3685,6 @@ namespace AMI_Manager.Forms.Main
 
                             //string img_path = basepath + insp_info.insp_Data + "\\" + "x2292" + "\\" + insp_info.Pid + "_" + insp_info.Vision_Num;
                             string[] files = Directory.GetFiles(img_path, "*Pre*.csv");
-                            string inspectionTime = selectedItem_info.SubItems.Count > 3
-                                ? selectedItem_info.SubItems[3].Text
-                                : string.Empty;
                             string matchedCsv = ResolvePreResultCsvByInspectionTime(files, inspectionTime);
 
                             Crop_bin_path_Pre[vpIndex] = ResolveBinPathOrExtractFromZip(img_path, true);
