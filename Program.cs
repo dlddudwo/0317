@@ -3439,93 +3439,6 @@ namespace AMI_Manager.Forms.Main
             return true;
         }
 
-        private static string BuildInspectionLookupKey(string serialNumber, string inspectionDate, string inspectionTime, string vpNumber)
-        {
-            return string.Join("|",
-                (serialNumber ?? string.Empty).Trim(),
-                (inspectionDate ?? string.Empty).Trim(),
-                (inspectionTime ?? string.Empty).Trim(),
-                (vpNumber ?? string.Empty).Trim());
-        }
-
-        private static string BuildInspectionGroupKey(string serialNumber, string inspectionDate, string vpNumber)
-        {
-            return string.Join("|",
-                (serialNumber ?? string.Empty).Trim(),
-                (inspectionDate ?? string.Empty).Trim(),
-                (vpNumber ?? string.Empty).Trim());
-        }
-
-        private bool TryParseInspectionTimeToSeconds(string value, out int seconds)
-        {
-            seconds = 0;
-            string normalized = NormalizeTimeTokenToHHMMSS(value);
-            if (!IsValidHHMMSS(normalized))
-            {
-                return false;
-            }
-
-            int hh;
-            int mm;
-            int ss;
-            if (!int.TryParse(normalized.Substring(0, 2), out hh)
-                || !int.TryParse(normalized.Substring(2, 2), out mm)
-                || !int.TryParse(normalized.Substring(4, 2), out ss))
-            {
-                return false;
-            }
-
-            seconds = (hh * 3600) + (mm * 60) + ss;
-            return true;
-        }
-
-        private bool TryFindNearestInspectionIndex(List<int> candidates, string selectedInspectionTime, out int inspectionIndex)
-        {
-            inspectionIndex = -1;
-            if (candidates == null || candidates.Count == 0)
-            {
-                return false;
-            }
-
-            int selectedSeconds;
-            if (!TryParseInspectionTimeToSeconds(selectedInspectionTime, out selectedSeconds))
-            {
-                return false;
-            }
-
-            int bestDiff = int.MaxValue;
-            int bestIndex = -1;
-            for (int i = 0; i < candidates.Count; i++)
-            {
-                int candidateIndex = candidates[i];
-                if (candidateIndex < 0 || candidateIndex >= inspectionDataList.Count)
-                {
-                    continue;
-                }
-
-                int candidateSeconds;
-                if (!TryParseInspectionTimeToSeconds(inspectionDataList[candidateIndex].InspectionTime, out candidateSeconds))
-                {
-                    continue;
-                }
-
-                int diff = Math.Abs(candidateSeconds - selectedSeconds);
-                if (diff < bestDiff)
-                {
-                    bestDiff = diff;
-                    bestIndex = candidateIndex;
-                }
-            }
-
-            if (bestIndex < 0)
-            {
-                return false;
-            }
-
-            inspectionIndex = bestIndex;
-            return true;
-        }
-
         private static void ReleaseComObjectIfNeeded(object comObject)
         {
             if (comObject != null && Marshal.IsComObject(comObject))
@@ -3544,27 +3457,11 @@ namespace AMI_Manager.Forms.Main
                 Excel.Application excelApp = null;
                 Excel.Workbook workbook = null;
                 Excel.Worksheet worksheet = null;
-                bool previousScreenUpdating = true;
-                bool previousDisplayAlerts = true;
-                bool previousEnableEvents = true;
-                Excel.XlCalculation previousCalculation = Excel.XlCalculation.xlCalculationAutomatic;
-                bool excelPerfTuned = false;
 
                 try
                 {
                     //엑셀 생성
                     excelApp = new Excel.Application();
-                    previousScreenUpdating = excelApp.ScreenUpdating;
-                    previousDisplayAlerts = excelApp.DisplayAlerts;
-                    previousEnableEvents = excelApp.EnableEvents;
-                    previousCalculation = excelApp.Calculation;
-
-                    excelApp.ScreenUpdating = false;
-                    excelApp.DisplayAlerts = false;
-                    excelApp.EnableEvents = false;
-                    excelApp.Calculation = Excel.XlCalculation.xlCalculationManual;
-                    excelPerfTuned = true;
-
                     workbook = excelApp.Workbooks.Add();
                     worksheet = workbook.Worksheets.get_Item(1) as Excel.Worksheet;
                     worksheet.Rows.RowHeight = 100;
@@ -3608,34 +3505,14 @@ namespace AMI_Manager.Forms.Main
 
                     Row_num++;
 
-                    Dictionary<string, int> inspectionIndexByPanel = new Dictionary<string, int>(StringComparer.Ordinal);
-                    Dictionary<string, List<int>> inspectionIndexesByPanelGroup = new Dictionary<string, List<int>>(StringComparer.Ordinal);
+                    Dictionary<string, int> inspectionIndexBySerial = new Dictionary<string, int>(StringComparer.Ordinal);
                     for (int i = 0; i < inspectionDataList.Count; i++)
                     {
-                        InspectionData inspectionData = inspectionDataList[i];
-                        string lookupKey = BuildInspectionLookupKey(
-                            inspectionData.SerialNumber,
-                            inspectionData.InspectionDate,
-                            inspectionData.InspectionTime,
-                            inspectionData.Vpnum);
-
-                        if (!inspectionIndexByPanel.ContainsKey(lookupKey))
+                        string serial = inspectionDataList[i].SerialNumber;
+                        if (!inspectionIndexBySerial.ContainsKey(serial))
                         {
-                            inspectionIndexByPanel.Add(lookupKey, i);
+                            inspectionIndexBySerial.Add(serial, i);
                         }
-
-                        string groupKey = BuildInspectionGroupKey(
-                            inspectionData.SerialNumber,
-                            inspectionData.InspectionDate,
-                            inspectionData.Vpnum);
-
-                        List<int> indexes;
-                        if (!inspectionIndexesByPanelGroup.TryGetValue(groupKey, out indexes))
-                        {
-                            indexes = new List<int>();
-                            inspectionIndexesByPanelGroup.Add(groupKey, indexes);
-                        }
-                        indexes.Add(i);
                     }
 
                     //패널별로 반복문
@@ -3648,8 +3525,6 @@ namespace AMI_Manager.Forms.Main
                             System.Windows.Forms.ListViewItem selectedItem_info = LV_PANEL_LIST.SelectedItems[panel_num]; // 첫 번째 선택된 항목 접근
                             select_pid = selectedItem_info.SubItems[1].Text.ToString();  //시리얼 넘버 접근
                             vpnumber = selectedItem_info.SubItems[6].Text.ToString();  //시리얼 넘버 접근
-                            string inspectionDate = selectedItem_info.SubItems.Count > 2 ? selectedItem_info.SubItems[2].Text : string.Empty;
-                            string inspectionTime = selectedItem_info.SubItems.Count > 3 ? selectedItem_info.SubItems[3].Text : string.Empty;
 
                             int totalDefectCountForPanel = 0;
                             if (View_mode == 1)
@@ -3677,16 +3552,9 @@ namespace AMI_Manager.Forms.Main
                             int completedDefectCountForPanel = 0;
 
                             int inspectionIndex;
-                            string selectedPanelKey = BuildInspectionLookupKey(select_pid, inspectionDate, inspectionTime, vpnumber);
-                            if (!inspectionIndexByPanel.TryGetValue(selectedPanelKey, out inspectionIndex))
+                            if (!inspectionIndexBySerial.TryGetValue(select_pid, out inspectionIndex))
                             {
-                                string selectedGroupKey = BuildInspectionGroupKey(select_pid, inspectionDate, vpnumber);
-                                List<int> candidateIndexes;
-                                if (!inspectionIndexesByPanelGroup.TryGetValue(selectedGroupKey, out candidateIndexes)
-                                    || !TryFindNearestInspectionIndex(candidateIndexes, inspectionTime, out inspectionIndex))
-                                {
-                                    continue;
-                                }
+                                continue;
                             }
 
                             insp_info.listview_index = inspectionIndex;
@@ -3701,6 +3569,9 @@ namespace AMI_Manager.Forms.Main
 
                             //string img_path = basepath + insp_info.insp_Data + "\\" + "x2292" + "\\" + insp_info.Pid + "_" + insp_info.Vision_Num;
                             string[] files = Directory.GetFiles(img_path, "*Pre*.csv");
+                            string inspectionTime = selectedItem_info.SubItems.Count > 3
+                                ? selectedItem_info.SubItems[3].Text
+                                : string.Empty;
                             string matchedCsv = ResolvePreResultCsvByInspectionTime(files, inspectionTime);
 
                             Crop_bin_path_Pre[vpIndex] = ResolveBinPathOrExtractFromZip(img_path, true);
@@ -3708,112 +3579,276 @@ namespace AMI_Manager.Forms.Main
                             if (!string.IsNullOrEmpty(matchedCsv))
                                 listview2_ReadCSV_Only(matchedCsv);
 
-                            List<Dictionary<string, object>> activeFeatureRows = View_mode == 1 ? Feature_row : Feature_row_post;
-                            if (activeFeatureRows.Count == 0)
+                            int image_column = 0;
+                            // 실 정보 쓰는 곳
+                            if (View_mode == 1)
                             {
-                                Console.WriteLine("  WRITE DEFECT 0 / 0 (PANEL " + (panel_num + 1) + "/" + selectedPanelCount + ")");
-                                continue;
-                            }
-
-                            List<int> filteredFeatureIndexes = new List<int>();
-                            for (int feature_count = 0; feature_count < activeFeatureRows.Count; feature_count++)
-                            {
-                                bool include = View_mode == 1
-                                    ? IsExcelPreDefectIncluded(feature_count)
-                                    : IsExcelPostDefectIncluded(feature_count);
-                                if (include)
+                                for (int feature_count = 0; feature_count < Feature_row.Count; feature_count++)
                                 {
-                                    filteredFeatureIndexes.Add(feature_count);
-                                }
-                            }
-
-                            if (filteredFeatureIndexes.Count == 0)
-                            {
-                                Console.WriteLine("  WRITE DEFECT 0 / 0 (PANEL " + (panel_num + 1) + "/" + selectedPanelCount + ")");
-                                continue;
-                            }
-
-                            int panelColumnCount = selectedItem_info.SubItems.Count;
-                            int featureColumnCount = activeFeatureRows[0].Count;
-                            int totalColumnCount = panelColumnCount + 1 + featureColumnCount;
-                            object[,] panelBatchRows = new object[filteredFeatureIndexes.Count, totalColumnCount];
-
-                            for (int rowOffset = 0; rowOffset < filteredFeatureIndexes.Count; rowOffset++)
-                            {
-                                int featureIndex = filteredFeatureIndexes[rowOffset];
-
-                                for (int col = 0; col < panelColumnCount; col++)
-                                {
-                                    panelBatchRows[rowOffset, col] = selectedItem_info.SubItems[col].Text;
-                                }
-
-                                int defectColumnStart = panelColumnCount + 1;
-                                int defectColumnOffset = 0;
-                                foreach (var kvp in activeFeatureRows[featureIndex])
-                                {
-                                    panelBatchRows[rowOffset, defectColumnStart + defectColumnOffset] = kvp.Value;
-                                    defectColumnOffset++;
-                                }
-                            }
-
-                            Excel.Range panelDataRange = worksheet.Range[
-                                worksheet.Cells[Row_num, 1],
-                                worksheet.Cells[Row_num + filteredFeatureIndexes.Count - 1, totalColumnCount]];
-                            panelDataRange.Value2 = panelBatchRows;
-
-                            if (CB_SAVE_IMAGE.Checked)
-                            {
-                                for (int rowOffset = 0; rowOffset < filteredFeatureIndexes.Count; rowOffset++)
-                                {
-                                    int featureIndex = filteredFeatureIndexes[rowOffset];
-                                    try
+                                    if (!IsExcelPreDefectIncluded(feature_count))
                                     {
-                                        using (Bitmap bitmap = LoadFileNamesFromBinary(Crop_bin_path_Pre[vpIndex], 0, featureIndex))
-                                        {
-                                            string tempFilePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".png");
-                                            bitmap.Save(tempFilePath, ImageFormat.Png);
+                                        continue;
+                                    }
 
-                                            try
+
+
+
+
+
+                                    column = 1;
+                                    object[,] dataArray_panel = new object[1, selectedItem_info.SubItems.Count]; // +1은 헤더용
+                                    int col_index_panel = 0;
+                                    for (int i = 0; i < selectedItem_info.SubItems.Count; i++)
+                                    {
+                                        string columnText = selectedItem_info.SubItems[i].Text;
+                                        dataArray_panel[0, col_index_panel] = columnText;
+                                        col_index_panel++;
+                                    }
+                                    Excel.Range range_panel = worksheet.Range[worksheet.Cells[Row_num, column], worksheet.Cells[Row_num, column + selectedItem_info.SubItems.Count - 1]];
+                                    range_panel.Value2 = dataArray_panel;
+
+                                    column += selectedItem_info.SubItems.Count;
+
+                                    //이미지 넣어주기
+                                    image_column = column;
+                                    if (CB_SAVE_IMAGE.Checked)
+                                    {
+                                        try
+                                        {
+                                            using (Bitmap bitmap = LoadFileNamesFromBinary(Crop_bin_path_Pre[vpIndex], 0, feature_count))
                                             {
-                                                Excel.Range cell = worksheet.Cells[Row_num + rowOffset, panelColumnCount + 1];
+                                                string tempFilePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".png");
+                                                bitmap.Save(tempFilePath, ImageFormat.Png);
+
+                                                try
+                                                {
+                                                    Excel.Range cell = worksheet.Cells[Row_num, column];
+                                                    float left = (float)((double)cell.Left);
+                                                    float top = (float)((double)cell.Top);
+                                                    float width = bitmap.Width;
+                                                    float height = 100;
+
+                                                    Excel.Shape shape = worksheet.Shapes.AddPicture(
+                                                        tempFilePath,
+                                                        Microsoft.Office.Core.MsoTriState.msoFalse,
+                                                        Microsoft.Office.Core.MsoTriState.msoCTrue,
+                                                        left, top, width, height
+                                                    );
+                                                    shape.Placement = Excel.XlPlacement.xlMoveAndSize;
+                                                }
+                                                finally
+                                                {
+                                                    if (File.Exists(tempFilePath))
+                                                    {
+                                                        File.Delete(tempFilePath);
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        catch (Exception ex)
+                                        {
+                                            Console.WriteLine("Image Paste Error :" + ex.ToString());
+                                        }
+
+
+                                        finally
+                        {
+                                            //// 임시 파일 정리
+                                            //if (File.Exists(tempFilePath))
+                                            //    File.Delete(tempFilePath);
+                                        }
+                                    }
+
+
+                                    if (false)
+                                    {
+                                        try
+                                        {
+                                            // Bitmap 이미지를 로드
+                                            Bitmap bitmap = LoadFileNamesFromBinary(Crop_bin_path_Pre[vpIndex], 0, feature_count);//vp2추가필요
+
+                                            // Bitmap 이미지를 메모리 스트림으로 변환
+                                            using (MemoryStream memoryStream = new MemoryStream())
+                                            {
+                                                bitmap.Save(memoryStream, System.Drawing.Imaging.ImageFormat.Png);
+                                                byte[] imageBytes = memoryStream.ToArray();
+
+                                                // 임시 파일 생성
+                                                string tempFilePath = Path.GetTempFileName();
+                                                File.WriteAllBytes(tempFilePath, imageBytes);
+
+                                                // 엑셀 워크시트에 이미지 삽입
+                                                Excel.Range cell = worksheet.Cells[Row_num, column];
                                                 float left = (float)((double)cell.Left);
                                                 float top = (float)((double)cell.Top);
                                                 float width = bitmap.Width;
                                                 float height = 100;
 
                                                 Excel.Shape shape = worksheet.Shapes.AddPicture(
-                                                    tempFilePath,
+                                                    tempFilePath,  // 임시 파일 경로
                                                     Microsoft.Office.Core.MsoTriState.msoFalse,
                                                     Microsoft.Office.Core.MsoTriState.msoCTrue,
                                                     left, top, width, height
                                                 );
+
                                                 shape.Placement = Excel.XlPlacement.xlMoveAndSize;
-                                            }
-                                            finally
-                                            {
-                                                if (File.Exists(tempFilePath))
-                                                {
-                                                    File.Delete(tempFilePath);
-                                                }
+
+
+                                                // 임시 파일 삭제
+                                                File.Delete(tempFilePath);
                                             }
                                         }
-                                    }
-                                    catch (Exception ex)
-                                    {
-                                        Console.WriteLine("Image Paste Error :" + ex.ToString());
+                                        catch (Exception ex)
+                                        {
+                                            Console.WriteLine("Image Paste Error :" + ex.ToString());
+                                        }
+
                                     }
 
+                                    //-----
+
+                                    column++;
+
+                                    if (View_mode == 1)
+                                    {
+                                        object[,] dataArray_defect = new object[1, Feature_row[feature_count].Count]; // +1은 헤더용
+                                        int col_index_defect = 0;
+                                        foreach (var kvp in Feature_row[feature_count])
+                                        {
+                                            dataArray_defect[0, col_index_defect] = kvp.Value;
+                                            col_index_defect++;
+                                        }
+                                        Excel.Range range_defect = worksheet.Range[worksheet.Cells[Row_num, column], worksheet.Cells[Row_num, column + Feature_row[feature_count].Count - 1]];
+                                        range_defect.Value2 = dataArray_defect;
+                                    }
+                                    else
+                                    {
+                                        object[,] dataArray_defect = new object[1, Feature_row_post[feature_count].Count]; // +1은 헤더용
+                                        int col_index_defect = 0;
+                                        foreach (var kvp in Feature_row_post[feature_count])
+                                        {
+                                            dataArray_defect[0, col_index_defect] = kvp.Value;
+                                            col_index_defect++;
+                                        }
+                                        Excel.Range range_defect = worksheet.Range[worksheet.Cells[Row_num, column], worksheet.Cells[Row_num, column + Feature_row_post[feature_count].Count - 1]];
+                                        range_defect.Value2 = dataArray_defect;
+                                    }
+
+                                    Row_num++;
                                     completedDefectCountForPanel++;
                                     Console.WriteLine("  WRITE DEFECT " + completedDefectCountForPanel + " / " + totalDefectCountForPanel + " (PANEL " + (panel_num + 1) + "/" + selectedPanelCount + ")");
                                 }
                             }
                             else
                             {
-                                completedDefectCountForPanel = filteredFeatureIndexes.Count;
-                                Console.WriteLine("  WRITE DEFECT " + completedDefectCountForPanel + " / " + totalDefectCountForPanel + " (PANEL " + (panel_num + 1) + "/" + selectedPanelCount + ")");
+                                for (int feature_count = 0; feature_count < Feature_row_post.Count; feature_count++)
+                                {
+                                    if (!IsExcelPostDefectIncluded(feature_count))
+                                    {
+                                        continue;
+                                    }
+                                    column = 1;
+                                    object[,] dataArray_panel = new object[1, selectedItem_info.SubItems.Count]; // +1은 헤더용
+                                    int col_index_panel = 0;
+                                    for (int i = 0; i < selectedItem_info.SubItems.Count; i++)
+                                    {
+                                        string columnText = selectedItem_info.SubItems[i].Text;
+                                        dataArray_panel[0, col_index_panel] = columnText;
+                                        col_index_panel++;
+                                    }
+                                    Excel.Range range_panel = worksheet.Range[worksheet.Cells[Row_num, column], worksheet.Cells[Row_num, column + selectedItem_info.SubItems.Count - 1]];
+                                    range_panel.Value2 = dataArray_panel;
+
+                                    column += selectedItem_info.SubItems.Count;
+
+                                    //이미지 넣어주기
+                                    image_column = column;
+
+
+
+                                    if (CB_SAVE_IMAGE.Checked)
+                                    {
+                                        try
+                                        {
+                                            using (Bitmap bitmap = LoadFileNamesFromBinary(Crop_bin_path_Pre[vpIndex], 0, feature_count))
+                                            {
+                                                string tempFilePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".png");
+                                                bitmap.Save(tempFilePath, ImageFormat.Png);
+
+                                                try
+                                                {
+                                                    Excel.Range cell = worksheet.Cells[Row_num, column];
+                                                    float left = (float)((double)cell.Left);
+                                                    float top = (float)((double)cell.Top);
+                                                    float width = bitmap.Width;
+                                                    float height = 100;
+
+                                                    Excel.Shape shape = worksheet.Shapes.AddPicture(
+                                                        tempFilePath,
+                                                        Microsoft.Office.Core.MsoTriState.msoFalse,
+                                                        Microsoft.Office.Core.MsoTriState.msoCTrue,
+                                                        left, top, width, height
+                                                    );
+                                                    shape.Placement = Excel.XlPlacement.xlMoveAndSize;
+                                                }
+                                                finally
+                                                {
+                                                    if (File.Exists(tempFilePath))
+                                                    {
+                                                        File.Delete(tempFilePath);
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        catch (Exception ex)
+                                        {
+                                            Console.WriteLine("Image Paste Error :" + ex.ToString());
+                                        }
+
+                                    }
+
+
+                                    //-----
+
+                                    column++;
+
+                                    if (View_mode == 1)
+                                    {
+                                        object[,] dataArray_defect = new object[1, Feature_row[feature_count].Count]; // +1은 헤더용
+                                        int col_index_defect = 0;
+                                        foreach (var kvp in Feature_row[feature_count])
+                                        {
+                                            dataArray_defect[0, col_index_defect] = kvp.Value;
+                                            col_index_defect++;
+                                        }
+                                        Excel.Range range_defect = worksheet.Range[worksheet.Cells[Row_num, column], worksheet.Cells[Row_num, column + Feature_row[feature_count].Count - 1]];
+                                        range_defect.Value2 = dataArray_defect;
+                                    }
+                                    else
+                                    {
+                                        object[,] dataArray_defect = new object[1, Feature_row_post[feature_count].Count]; // +1은 헤더용
+                                        int col_index_defect = 0;
+                                        foreach (var kvp in Feature_row_post[feature_count])
+                                        {
+                                            dataArray_defect[0, col_index_defect] = kvp.Value;
+                                            col_index_defect++;
+                                        }
+                                        Excel.Range range_defect = worksheet.Range[worksheet.Cells[Row_num, column], worksheet.Cells[Row_num, column + Feature_row_post[feature_count].Count - 1]];
+                                        range_defect.Value2 = dataArray_defect;
+                                    }
+
+                                    Row_num++;
+                                    completedDefectCountForPanel++;
+                                    Console.WriteLine("  WRITE DEFECT " + completedDefectCountForPanel + " / " + totalDefectCountForPanel + " (PANEL " + (panel_num + 1) + "/" + selectedPanelCount + ")");
+                                }
                             }
 
-                            Row_num += filteredFeatureIndexes.Count;
+                            if (totalDefectCountForPanel == 0)
+                            {
+                                Console.WriteLine("  WRITE DEFECT 0 / 0 (PANEL " + (panel_num + 1) + "/" + selectedPanelCount + ")");
+                            }
                         }
                         catch (Exception ex)
                         {
@@ -3848,20 +3883,6 @@ namespace AMI_Manager.Forms.Main
 
                     if (excelApp != null)
                     {
-                        if (excelPerfTuned)
-                        {
-                            try
-                            {
-                                excelApp.ScreenUpdating = previousScreenUpdating;
-                                excelApp.DisplayAlerts = previousDisplayAlerts;
-                                excelApp.EnableEvents = previousEnableEvents;
-                                excelApp.Calculation = previousCalculation;
-                            }
-                            catch
-                            {
-                            }
-                        }
-
                         try
                         {
                             excelApp.Quit();
