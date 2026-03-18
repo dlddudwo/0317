@@ -666,8 +666,9 @@ namespace AMI_Manager.Forms.Main
             }
 
             string selectPid = selectedItem.SubItems[1].Text;
+            string selectInspectionTime = selectedItem.SubItems.Count > 3 ? selectedItem.SubItems[3].Text : string.Empty;
             string vpNumber = selectedItem.SubItems[6].Text;
-            if (string.IsNullOrEmpty(selectPid) || string.IsNullOrEmpty(vpNumber))
+            if (string.IsNullOrEmpty(selectPid) || string.IsNullOrEmpty(selectInspectionTime) || string.IsNullOrEmpty(vpNumber))
             {
                 return false;
             }
@@ -682,7 +683,9 @@ namespace AMI_Manager.Forms.Main
                 }
 
                 string dataVpSuffix = vpnum.Substring(vpnum.Length - 1);
-                if (inspectionDataList[i].SerialNumber == selectPid && dataVpSuffix == vpSuffix)
+                if (inspectionDataList[i].SerialNumber == selectPid
+                    && inspectionDataList[i].InspectionTime == selectInspectionTime
+                    && dataVpSuffix == vpSuffix)
                 {
                     insp_info.listview_index = i;
                     navi.Panel_index = i;
