@@ -718,43 +718,87 @@ namespace AMI_Manager.Forms.Main
             return string.Empty;
         }
 
-        private string ResolvePreResultCsvByInspectionTime(string[] csvFiles, string inspectionTime)
+        private string ResolveResultCsvByInspectionTime(string[] csvFiles, string inspectionTime, string resultToken)
         {
             if (csvFiles == null || csvFiles.Length == 0)
             {
                 return string.Empty;
             }
 
-            if (csvFiles.Length == 1)
+            List<string> candidates = csvFiles
+                .Where(path => Path.GetFileName(path).IndexOf(resultToken, StringComparison.OrdinalIgnoreCase) >= 0)
+                .ToList();
+
+            if (candidates.Count == 0)
             {
-                return csvFiles[0];
+                return string.Empty;
+            }
+
+            if (candidates.Count == 1)
+            {
+                return candidates[0];
             }
 
             string normalizedInspectionTime = NormalizeTimeTokenToHHMMSS(inspectionTime);
-            if (string.IsNullOrEmpty(normalizedInspectionTime))
+            int inspectionSeconds;
+            if (!TryConvertHHMMSSStringToSeconds(normalizedInspectionTime, out inspectionSeconds))
             {
-                return csvFiles[0];
+                return string.Empty;
             }
 
-            for (int i = 0; i < csvFiles.Length; i++)
+            int minDiff = int.MaxValue;
+            string nearestPath = string.Empty;
+            for (int i = 0; i < candidates.Count; i++)
             {
-                string fileTimeToken = ExtractTimeTokenFromPreResultCsv(csvFiles[i]);
-                //if (string.Equals(fileTimeToken, normalizedInspectionTime, StringComparison.Ordinal))
-                //{
-                //    return csvFiles[i];
-                //}
-
-                if (DateTime.TryParse(fileTimeToken, out DateTime fileTime) && DateTime.TryParse(normalizedInspectionTime, out DateTime inspectionTime_))
+                string fileTimeToken = ExtractTimeTokenFromPreResultCsv(candidates[i]);
+                int fileSeconds;
+                if (!TryConvertHHMMSSStringToSeconds(fileTimeToken, out fileSeconds))
                 {
-                    if (Math.Abs((fileTime - inspectionTime_).TotalMinutes) <= 1)
-                    {
-                        return csvFiles[i];
-                    }
+                    continue;
                 }
 
+                int diff = Math.Abs(fileSeconds - inspectionSeconds);
+                if (diff < minDiff)
+                {
+                    minDiff = diff;
+                    nearestPath = candidates[i];
+                }
             }
 
-            return csvFiles[0];
+            return nearestPath;
+        }
+
+        private bool TryConvertHHMMSSStringToSeconds(string hhmmssLike, out int seconds)
+        {
+            seconds = 0;
+            if (string.IsNullOrEmpty(hhmmssLike))
+            {
+                return false;
+            }
+
+            string normalized = NormalizeTimeTokenToHHMMSS(hhmmssLike);
+            if (!IsValidHHMMSS(normalized))
+            {
+                return false;
+            }
+
+            int hh;
+            int mm;
+            int ss;
+            if (!int.TryParse(normalized.Substring(0, 2), out hh)
+                || !int.TryParse(normalized.Substring(2, 2), out mm)
+                || !int.TryParse(normalized.Substring(4, 2), out ss))
+            {
+                return false;
+            }
+
+            seconds = (hh * 3600) + (mm * 60) + ss;
+            return true;
+        }
+
+        private string ResolvePreResultCsvByInspectionTime(string[] csvFiles, string inspectionTime)
+        {
+            return ResolveResultCsvByInspectionTime(csvFiles, inspectionTime, "Pre");
         }
 
         private string ExtractTimeTokenFromPreResultCsv(string csvPath)
@@ -951,17 +995,20 @@ namespace AMI_Manager.Forms.Main
 
                     if (files.Length > 0)
                     {
-                        string pre_path = "";
-                        string post_path = "";
-                        //여기다가 pre정보 넣어줘야함
-                        for (int i = 0; i < files.Length; i++)
+                        string selectedInspectionTime = string.Empty;
+                        if (insp_info.listview_index >= 0 && insp_info.listview_index < inspectionDataList.Count)
                         {
-                            if (files[i].Contains("Pre"))
-                                pre_path = files[i];
-
-                            if (files[i].Contains("Post"))
-                                post_path = files[i];
+                            selectedInspectionTime = inspectionDataList[insp_info.listview_index].InspectionTime;
                         }
+
+                        string pre_path = ResolveResultCsvByInspectionTime(files, selectedInspectionTime, "Pre");
+                        string post_path = ResolveResultCsvByInspectionTime(files, selectedInspectionTime, "Post");
+
+                        if (string.IsNullOrEmpty(pre_path) || string.IsNullOrEmpty(post_path))
+                        {
+                            continue;
+                        }
+
                         listview2_ReadCSV(pre_path, post_path, vp_num_list_count);
                     }
                 }
