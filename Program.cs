@@ -777,6 +777,63 @@ namespace AMI_Manager.Forms.Main
             return point.X >= 0 && point.Y >= 0;
         }
 
+        private string ResolveSimulationJsonByInspectionTime(string panelFolderPath, string inspectionTime)
+        {
+            if (string.IsNullOrEmpty(panelFolderPath) || !Directory.Exists(panelFolderPath))
+            {
+                return string.Empty;
+            }
+
+            string[] simulationFiles = Directory.GetFiles(panelFolderPath, "simulation*.json", SearchOption.TopDirectoryOnly);
+            if (simulationFiles.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            int inspectionSeconds;
+            if (!TryConvertHHMMSSStringToSeconds(inspectionTime, out inspectionSeconds))
+            {
+                return simulationFiles[0];
+            }
+
+            int minDiff = int.MaxValue;
+            string nearestPath = string.Empty;
+            for (int i = 0; i < simulationFiles.Length; i++)
+            {
+                string fileName = Path.GetFileNameWithoutExtension(simulationFiles[i]);
+                if (string.IsNullOrEmpty(fileName))
+                {
+                    continue;
+                }
+
+                string[] tokens = fileName.Split('_');
+                if (tokens.Length < 2)
+                {
+                    continue;
+                }
+
+                int fileSeconds;
+                if (!TryConvertHHMMSSStringToSeconds(tokens[tokens.Length - 1], out fileSeconds))
+                {
+                    continue;
+                }
+
+                int diff = Math.Abs(fileSeconds - inspectionSeconds);
+                if (diff < minDiff)
+                {
+                    minDiff = diff;
+                    nearestPath = simulationFiles[i];
+                }
+            }
+
+            if (!string.IsNullOrEmpty(nearestPath))
+            {
+                return nearestPath;
+            }
+
+            return simulationFiles[0];
+        }
+
         private string ResolveResultCsvByInspectionTime(string[] csvFiles, string inspectionTime, string resultToken)
         {
             if (csvFiles == null || csvFiles.Length == 0)
@@ -2913,8 +2970,9 @@ namespace AMI_Manager.Forms.Main
                 }
 
                 string serialNumber = selectedItem.SubItems[1].Text;
+                string selectedInspectionTime = selectedItem.SubItems.Count > 3 ? selectedItem.SubItems[3].Text : string.Empty;
                 string vpNumberText = selectedItem.SubItems[6].Text;
-                if (string.IsNullOrEmpty(serialNumber) || string.IsNullOrEmpty(vpNumberText))
+                if (string.IsNullOrEmpty(serialNumber) || string.IsNullOrEmpty(selectedInspectionTime) || string.IsNullOrEmpty(vpNumberText))
                 {
                     continue;
                 }
@@ -2930,7 +2988,9 @@ namespace AMI_Manager.Forms.Main
                     }
 
                     string vpSuffix = vpnum.Substring(vpnum.Length - 1);
-                    if (inspectionDataList[i].SerialNumber == serialNumber && vpSuffix == selectedVpSuffix)
+                    if (inspectionDataList[i].SerialNumber == serialNumber
+                        && inspectionDataList[i].InspectionTime == selectedInspectionTime
+                        && vpSuffix == selectedVpSuffix)
                     {
                         sourceIndex = i;
                         break;
@@ -2959,7 +3019,13 @@ namespace AMI_Manager.Forms.Main
                     continue;
                 }
 
-                PanelSimulationFilePath.Add(simulationPath);
+                string matchedSimulationFile = ResolveSimulationJsonByInspectionTime(simulationPath, selectedInspectionTime);
+                if (string.IsNullOrEmpty(matchedSimulationFile))
+                {
+                    continue;
+                }
+
+                PanelSimulationFilePath.Add(matchedSimulationFile);
                 targetListViewIndices.Add(selectedItem.Index);
             }
 
