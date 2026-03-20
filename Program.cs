@@ -721,6 +721,59 @@ namespace AMI_Manager.Forms.Main
             return string.Empty;
         }
 
+        private Dictionary<string, object> BuildFeatureRowFromCsv(string[] header, string[] values)
+        {
+            Dictionary<string, object> featureRow = new Dictionary<string, object>();
+            if (header == null)
+            {
+                return featureRow;
+            }
+
+            for (int i = 0; i < header.Length; i++)
+            {
+                string key = header[i];
+                if (string.IsNullOrEmpty(key))
+                {
+                    continue;
+                }
+
+                string value = i < values.Length ? values[i] : string.Empty;
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    value = "0";
+                }
+
+                if (!featureRow.ContainsKey(key))
+                {
+                    featureRow.Add(key, value);
+                }
+            }
+
+            return featureRow;
+        }
+
+        private bool TryGetFeatureIntValue(Dictionary<string, object> featureRow, string key, out int parsed)
+        {
+            parsed = 0;
+            if (featureRow == null || string.IsNullOrEmpty(key))
+            {
+                return false;
+            }
+
+            object raw;
+            if (!featureRow.TryGetValue(key, out raw))
+            {
+                return false;
+            }
+
+            return int.TryParse(Convert.ToString(raw), out parsed);
+        }
+
+        private bool IsDefectPointDrawable(System.Drawing.Point point)
+        {
+            return point.X >= 0 && point.Y >= 0;
+        }
+
         private string ResolveResultCsvByInspectionTime(string[] csvFiles, string inspectionTime, string resultToken)
         {
             if (csvFiles == null || csvFiles.Length == 0)
@@ -1116,32 +1169,44 @@ namespace AMI_Manager.Forms.Main
                         header = line.Split(',');
                         continue;
                     }
-                    Dictionary<string, object> Feature_defect = new Dictionary<string, object>();
                     var values = line.Split(',');
-                    for (int i = 0; i < values.Length; i++)
-                    {
-                        //Feature_row[header[i]] = values[i].ToString();
-                        Feature_defect.Add(header[i], values[i]);
-                    }
+                    bool isRowStructureDifferent = header == null || values.Length != header.Length;
+                    Dictionary<string, object> Feature_defect = BuildFeatureRowFromCsv(header, values);
                     Feature_row.Add(Feature_defect);
                     VP_Defect_num[vpnum - 1] = Feature_row.Count;
                     //System.Drawing.Point point = new System.Drawing.Point((int)(Convert.ToInt32(Feature_defect["PIXEL_Y"]?.ToString()) / picturebox_ratio_x), (int)(Convert.ToInt32(Feature_defect["PIXEL_X"]?.ToString()) / picturebox_ratio_y));
                     if (View_mode == 1)
                     {
-                        if (Swap_X == 1)
-                            Swap_X_POS = (int)((insp_info.panel_width - Convert.ToInt32(Feature_defect[POSITION_FEATURE_NAME_X]?.ToString())) / picturebox_ratio_x);
+                        int rawX;
+                        int rawY;
+                        bool canDrawPoint = !isRowStructureDifferent
+                            && TryGetFeatureIntValue(Feature_defect, POSITION_FEATURE_NAME_X, out rawX)
+                            && TryGetFeatureIntValue(Feature_defect, POSITION_FEATURE_NAME_Y, out rawY);
+
+                        if (canDrawPoint)
+                        {
+                            if (Swap_X == 1)
+                                Swap_X_POS = (int)((insp_info.panel_width - rawX) / picturebox_ratio_x);
+                            else
+                                Swap_X_POS = (int)(rawX / picturebox_ratio_x);
+                            if (Swap_Y == 1)
+                                Swap_Y_POS = (int)((insp_info.panel_Height - rawY) / picturebox_ratio_y);
+                            else
+                                Swap_Y_POS = (int)(rawY / picturebox_ratio_y);
+
+                            Defect_Position.Add(new System.Drawing.Point(Swap_X_POS, Swap_Y_POS));
+                        }
                         else
-                            Swap_X_POS = (int)(Convert.ToInt32(Feature_defect[POSITION_FEATURE_NAME_X]?.ToString()) / picturebox_ratio_x);
-                        if (Swap_Y == 1)
-                            Swap_Y_POS = (int)((insp_info.panel_Height - Convert.ToInt32(Feature_defect[POSITION_FEATURE_NAME_Y]?.ToString())) / picturebox_ratio_y);
-                        else
-                            Swap_Y_POS = (int)(Convert.ToInt32(Feature_defect[POSITION_FEATURE_NAME_Y]?.ToString()) / picturebox_ratio_y);
-                        System.Drawing.Point point = new System.Drawing.Point(Swap_X_POS, Swap_Y_POS);
-                        Defect_Position.Add(point);
+                        {
+                            Defect_Position.Add(new System.Drawing.Point(-1, -1));
+                        }
 
                         //여기는 judge부
-                        string Defect_position_judge = Feature_defect["DEFECT_JUDGE"].ToString();
-                        if (Defect_position_judge == "OK")
+                        object defectJudgeObj;
+                        string Defect_position_judge = Feature_defect.TryGetValue("DEFECT_JUDGE", out defectJudgeObj)
+                            ? Convert.ToString(defectJudgeObj)
+                            : string.Empty;
+                        if (string.Equals(Defect_position_judge, "OK", StringComparison.OrdinalIgnoreCase))
                             Defect_Position_Judge.Add(true);
                         else
                             Defect_Position_Judge.Add(false);
@@ -1166,23 +1231,35 @@ namespace AMI_Manager.Forms.Main
                         header = line.Split(',');
                         continue;
                     }
-                    Dictionary<string, object> Feature_defect = new Dictionary<string, object>();
                     var values = line.Split(',');
-                    for (int i = 0; i < values.Length; i++)
-                    {
-                        //Feature_row[header[i]] = values[i].ToString();
-                        Feature_defect.Add(header[i], values[i]);
-                    }
+                    bool isRowStructureDifferent = header == null || values.Length != header.Length;
+                    Dictionary<string, object> Feature_defect = BuildFeatureRowFromCsv(header, values);
                     Feature_row_post.Add(Feature_defect);
                     //System.Drawing.Point point = new System.Drawing.Point((int)(Convert.ToInt32(Feature_defect["PIXEL_Y"]?.ToString()) / picturebox_ratio_x), (int)(Convert.ToInt32(Feature_defect["PIXEL_X"]?.ToString()) / picturebox_ratio_y));
                     if (View_mode == 2)
                     {
-                        System.Drawing.Point point = new System.Drawing.Point((int)(Convert.ToInt32(Feature_defect[POSITION_FEATURE_NAME_X]?.ToString()) / picturebox_ratio_x), (int)(Convert.ToInt32(Feature_defect[POSITION_FEATURE_NAME_Y]?.ToString()) / picturebox_ratio_y));
-                        Defect_Position.Add(point);
+                        int rawX;
+                        int rawY;
+                        bool canDrawPoint = !isRowStructureDifferent
+                            && TryGetFeatureIntValue(Feature_defect, POSITION_FEATURE_NAME_X, out rawX)
+                            && TryGetFeatureIntValue(Feature_defect, POSITION_FEATURE_NAME_Y, out rawY);
+
+                        if (canDrawPoint)
+                        {
+                            System.Drawing.Point point = new System.Drawing.Point((int)(rawX / picturebox_ratio_x), (int)(rawY / picturebox_ratio_y));
+                            Defect_Position.Add(point);
+                        }
+                        else
+                        {
+                            Defect_Position.Add(new System.Drawing.Point(-1, -1));
+                        }
 
                         //여기는 judge부
-                        string Defect_position_judge = Feature_defect["DEFECT_JUDGE"].ToString();
-                        if (Defect_position_judge == "OK")
+                        object defectJudgeObj;
+                        string Defect_position_judge = Feature_defect.TryGetValue("DEFECT_JUDGE", out defectJudgeObj)
+                            ? Convert.ToString(defectJudgeObj)
+                            : string.Empty;
+                        if (string.Equals(Defect_position_judge, "OK", StringComparison.OrdinalIgnoreCase))
                             Defect_Position_Judge.Add(true);
                         else
                             Defect_Position_Judge.Add(false);
@@ -4138,6 +4215,11 @@ namespace AMI_Manager.Forms.Main
 
             for (int i = 0; i < Defect_Position.Count(); i++)
             {
+                if (!IsDefectPointDrawable(Defect_Position[i]))
+                {
+                    continue;
+                }
+
                 if (IsWithinRange(Defect_Position[i], mousePosition, 5))
                 {
                     //현재 거리가 5pixel
@@ -4584,6 +4666,16 @@ namespace AMI_Manager.Forms.Main
 
                     for (int i = 0; i < count; i++)
                     {
+                        if (i >= Defect_Position.Count || i >= Defect_Position_Judge.Count)
+                        {
+                            continue;
+                        }
+
+                        if (!IsDefectPointDrawable(Defect_Position[i]))
+                        {
+                            continue;
+                        }
+
                         if (Judge_mode == 0)//ok,ng둘다
                         {
 
