@@ -392,6 +392,9 @@ namespace AMI_Manager.Forms.Main
             PB_DEFECT_ARRAY.MouseClick += PictureBox_MouseClick;
             PB_DEFECT_ARRAY.Paint += PictureBox_Paint;
 
+            LV_PANEL_LIST.KeyDown -= LV_PANEL_LIST_KeyDown;
+            LV_PANEL_LIST.KeyDown += LV_PANEL_LIST_KeyDown;
+
             dtpDateFrom.Value = DateTime.Now;
             StartDate = dtpDateFrom.Value;
             StartDate = new DateTime(StartDate.Year, StartDate.Month, StartDate.Day, 0, 0, 0);
@@ -4372,6 +4375,28 @@ namespace AMI_Manager.Forms.Main
         private void LV_PANEL_LIST_DrawItem(object sender, DrawListViewItemEventArgs e)
         {
             e.DrawDefault = true;
+        }
+
+        private void LV_PANEL_LIST_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Control && e.KeyCode == Keys.A)
+            {
+                LV_PANEL_LIST.BeginUpdate();
+                try
+                {
+                    for (int i = 0; i < LV_PANEL_LIST.Items.Count; i++)
+                    {
+                        LV_PANEL_LIST.Items[i].Selected = true;
+                    }
+                }
+                finally
+                {
+                    LV_PANEL_LIST.EndUpdate();
+                }
+
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+            }
         }
 
         private void CB_SIMULATION_PANEL_CheckedChanged(object sender, EventArgs e)
