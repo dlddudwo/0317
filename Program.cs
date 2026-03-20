@@ -392,6 +392,9 @@ namespace AMI_Manager.Forms.Main
             PB_DEFECT_ARRAY.MouseClick += PictureBox_MouseClick;
             PB_DEFECT_ARRAY.Paint += PictureBox_Paint;
 
+            LV_PANEL_LIST.KeyDown -= LV_PANEL_LIST_KeyDown;
+            LV_PANEL_LIST.KeyDown += LV_PANEL_LIST_KeyDown;
+
             dtpDateFrom.Value = DateTime.Now;
             StartDate = dtpDateFrom.Value;
             StartDate = new DateTime(StartDate.Year, StartDate.Month, StartDate.Day, 0, 0, 0);
@@ -666,8 +669,9 @@ namespace AMI_Manager.Forms.Main
             }
 
             string selectPid = selectedItem.SubItems[1].Text;
+            string selectInspectionTime = selectedItem.SubItems.Count > 3 ? selectedItem.SubItems[3].Text : string.Empty;
             string vpNumber = selectedItem.SubItems[6].Text;
-            if (string.IsNullOrEmpty(selectPid) || string.IsNullOrEmpty(vpNumber))
+            if (string.IsNullOrEmpty(selectPid) || string.IsNullOrEmpty(selectInspectionTime) || string.IsNullOrEmpty(vpNumber))
             {
                 return false;
             }
@@ -682,7 +686,9 @@ namespace AMI_Manager.Forms.Main
                 }
 
                 string dataVpSuffix = vpnum.Substring(vpnum.Length - 1);
-                if (inspectionDataList[i].SerialNumber == selectPid && dataVpSuffix == vpSuffix)
+                if (inspectionDataList[i].SerialNumber == selectPid
+                    && inspectionDataList[i].InspectionTime == selectInspectionTime
+                    && dataVpSuffix == vpSuffix)
                 {
                     insp_info.listview_index = i;
                     navi.Panel_index = i;
@@ -718,43 +724,197 @@ namespace AMI_Manager.Forms.Main
             return string.Empty;
         }
 
-        private string ResolvePreResultCsvByInspectionTime(string[] csvFiles, string inspectionTime)
+        private Dictionary<string, object> BuildFeatureRowFromCsv(string[] header, string[] values)
+        {
+            Dictionary<string, object> featureRow = new Dictionary<string, object>();
+            if (header == null)
+            {
+                return featureRow;
+            }
+
+            for (int i = 0; i < header.Length; i++)
+            {
+                string key = header[i];
+                if (string.IsNullOrEmpty(key))
+                {
+                    continue;
+                }
+
+                string value = i < values.Length ? values[i] : string.Empty;
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    value = "0";
+                }
+
+                if (!featureRow.ContainsKey(key))
+                {
+                    featureRow.Add(key, value);
+                }
+            }
+
+            return featureRow;
+        }
+
+        private bool TryGetFeatureIntValue(Dictionary<string, object> featureRow, string key, out int parsed)
+        {
+            parsed = 0;
+            if (featureRow == null || string.IsNullOrEmpty(key))
+            {
+                return false;
+            }
+
+            object raw;
+            if (!featureRow.TryGetValue(key, out raw))
+            {
+                return false;
+            }
+
+            return int.TryParse(Convert.ToString(raw), out parsed);
+        }
+
+        private bool IsDefectPointDrawable(System.Drawing.Point point)
+        {
+            return point.X >= 0 && point.Y >= 0;
+        }
+
+        private string ResolveSimulationJsonByInspectionTime(string panelFolderPath, string inspectionTime)
+        {
+            if (string.IsNullOrEmpty(panelFolderPath) || !Directory.Exists(panelFolderPath))
+            {
+                return string.Empty;
+            }
+
+            string[] simulationFiles = Directory.GetFiles(panelFolderPath, "simulation*.json", SearchOption.TopDirectoryOnly);
+            if (simulationFiles.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            int inspectionSeconds;
+            if (!TryConvertHHMMSSStringToSeconds(inspectionTime, out inspectionSeconds))
+            {
+                return simulationFiles[0];
+            }
+
+            int minDiff = int.MaxValue;
+            string nearestPath = string.Empty;
+            for (int i = 0; i < simulationFiles.Length; i++)
+            {
+                string fileName = Path.GetFileNameWithoutExtension(simulationFiles[i]);
+                if (string.IsNullOrEmpty(fileName))
+                {
+                    continue;
+                }
+
+                string[] tokens = fileName.Split('_');
+                if (tokens.Length < 2)
+                {
+                    continue;
+                }
+
+                int fileSeconds;
+                if (!TryConvertHHMMSSStringToSeconds(tokens[tokens.Length - 1], out fileSeconds))
+                {
+                    continue;
+                }
+
+                int diff = Math.Abs(fileSeconds - inspectionSeconds);
+                if (diff < minDiff)
+                {
+                    minDiff = diff;
+                    nearestPath = simulationFiles[i];
+                }
+            }
+
+            if (!string.IsNullOrEmpty(nearestPath))
+            {
+                return nearestPath;
+            }
+
+            return simulationFiles[0];
+        }
+
+        private string ResolveResultCsvByInspectionTime(string[] csvFiles, string inspectionTime, string resultToken)
         {
             if (csvFiles == null || csvFiles.Length == 0)
             {
                 return string.Empty;
             }
 
-            if (csvFiles.Length == 1)
+            List<string> candidates = csvFiles
+                .Where(path => Path.GetFileName(path).IndexOf(resultToken, StringComparison.OrdinalIgnoreCase) >= 0)
+                .ToList();
+
+            if (candidates.Count == 0)
             {
-                return csvFiles[0];
+                return string.Empty;
+            }
+
+            if (candidates.Count == 1)
+            {
+                return candidates[0];
             }
 
             string normalizedInspectionTime = NormalizeTimeTokenToHHMMSS(inspectionTime);
-            if (string.IsNullOrEmpty(normalizedInspectionTime))
+            int inspectionSeconds;
+            if (!TryConvertHHMMSSStringToSeconds(normalizedInspectionTime, out inspectionSeconds))
             {
-                return csvFiles[0];
+                return string.Empty;
             }
 
-            for (int i = 0; i < csvFiles.Length; i++)
+            int minDiff = int.MaxValue;
+            string nearestPath = string.Empty;
+            for (int i = 0; i < candidates.Count; i++)
             {
-                string fileTimeToken = ExtractTimeTokenFromPreResultCsv(csvFiles[i]);
-                //if (string.Equals(fileTimeToken, normalizedInspectionTime, StringComparison.Ordinal))
-                //{
-                //    return csvFiles[i];
-                //}
-
-                if (DateTime.TryParse(fileTimeToken, out DateTime fileTime) && DateTime.TryParse(normalizedInspectionTime, out DateTime inspectionTime_))
+                string fileTimeToken = ExtractTimeTokenFromPreResultCsv(candidates[i]);
+                int fileSeconds;
+                if (!TryConvertHHMMSSStringToSeconds(fileTimeToken, out fileSeconds))
                 {
-                    if (Math.Abs((fileTime - inspectionTime_).TotalMinutes) <= 1)
-                    {
-                        return csvFiles[i];
-                    }
+                    continue;
                 }
 
+                int diff = Math.Abs(fileSeconds - inspectionSeconds);
+                if (diff < minDiff)
+                {
+                    minDiff = diff;
+                    nearestPath = candidates[i];
+                }
             }
 
-            return csvFiles[0];
+            return nearestPath;
+        }
+
+        private bool TryConvertHHMMSSStringToSeconds(string hhmmssLike, out int seconds)
+        {
+            seconds = 0;
+            if (string.IsNullOrEmpty(hhmmssLike))
+            {
+                return false;
+            }
+
+            string normalized = NormalizeTimeTokenToHHMMSS(hhmmssLike);
+            if (!IsValidHHMMSS(normalized))
+            {
+                return false;
+            }
+
+            int hh;
+            int mm;
+            int ss;
+            if (!int.TryParse(normalized.Substring(0, 2), out hh)
+                || !int.TryParse(normalized.Substring(2, 2), out mm)
+                || !int.TryParse(normalized.Substring(4, 2), out ss))
+            {
+                return false;
+            }
+
+            seconds = (hh * 3600) + (mm * 60) + ss;
+            return true;
+        }
+
+        private string ResolvePreResultCsvByInspectionTime(string[] csvFiles, string inspectionTime)
+        {
+            return ResolveResultCsvByInspectionTime(csvFiles, inspectionTime, "Pre");
         }
 
         private string ExtractTimeTokenFromPreResultCsv(string csvPath)
@@ -951,17 +1111,20 @@ namespace AMI_Manager.Forms.Main
 
                     if (files.Length > 0)
                     {
-                        string pre_path = "";
-                        string post_path = "";
-                        //여기다가 pre정보 넣어줘야함
-                        for (int i = 0; i < files.Length; i++)
+                        string selectedInspectionTime = string.Empty;
+                        if (insp_info.listview_index >= 0 && insp_info.listview_index < inspectionDataList.Count)
                         {
-                            if (files[i].Contains("Pre"))
-                                pre_path = files[i];
-
-                            if (files[i].Contains("Post"))
-                                post_path = files[i];
+                            selectedInspectionTime = inspectionDataList[insp_info.listview_index].InspectionTime;
                         }
+
+                        string pre_path = ResolveResultCsvByInspectionTime(files, selectedInspectionTime, "Pre");
+                        string post_path = ResolveResultCsvByInspectionTime(files, selectedInspectionTime, "Post");
+
+                        if (string.IsNullOrEmpty(pre_path) || string.IsNullOrEmpty(post_path))
+                        {
+                            continue;
+                        }
+
                         listview2_ReadCSV(pre_path, post_path, vp_num_list_count);
                     }
                 }
@@ -1066,32 +1229,44 @@ namespace AMI_Manager.Forms.Main
                         header = line.Split(',');
                         continue;
                     }
-                    Dictionary<string, object> Feature_defect = new Dictionary<string, object>();
                     var values = line.Split(',');
-                    for (int i = 0; i < values.Length; i++)
-                    {
-                        //Feature_row[header[i]] = values[i].ToString();
-                        Feature_defect.Add(header[i], values[i]);
-                    }
+                    bool isRowStructureDifferent = header == null || values.Length != header.Length;
+                    Dictionary<string, object> Feature_defect = BuildFeatureRowFromCsv(header, values);
                     Feature_row.Add(Feature_defect);
                     VP_Defect_num[vpnum - 1] = Feature_row.Count;
                     //System.Drawing.Point point = new System.Drawing.Point((int)(Convert.ToInt32(Feature_defect["PIXEL_Y"]?.ToString()) / picturebox_ratio_x), (int)(Convert.ToInt32(Feature_defect["PIXEL_X"]?.ToString()) / picturebox_ratio_y));
                     if (View_mode == 1)
                     {
-                        if (Swap_X == 1)
-                            Swap_X_POS = (int)((insp_info.panel_width - Convert.ToInt32(Feature_defect[POSITION_FEATURE_NAME_X]?.ToString())) / picturebox_ratio_x);
+                        int rawX;
+                        int rawY;
+                        bool canDrawPoint = !isRowStructureDifferent
+                            && TryGetFeatureIntValue(Feature_defect, POSITION_FEATURE_NAME_X, out rawX)
+                            && TryGetFeatureIntValue(Feature_defect, POSITION_FEATURE_NAME_Y, out rawY);
+
+                        if (canDrawPoint)
+                        {
+                            if (Swap_X == 1)
+                                Swap_X_POS = (int)((insp_info.panel_width - rawX) / picturebox_ratio_x);
+                            else
+                                Swap_X_POS = (int)(rawX / picturebox_ratio_x);
+                            if (Swap_Y == 1)
+                                Swap_Y_POS = (int)((insp_info.panel_Height - rawY) / picturebox_ratio_y);
+                            else
+                                Swap_Y_POS = (int)(rawY / picturebox_ratio_y);
+
+                            Defect_Position.Add(new System.Drawing.Point(Swap_X_POS, Swap_Y_POS));
+                        }
                         else
-                            Swap_X_POS = (int)(Convert.ToInt32(Feature_defect[POSITION_FEATURE_NAME_X]?.ToString()) / picturebox_ratio_x);
-                        if (Swap_Y == 1)
-                            Swap_Y_POS = (int)((insp_info.panel_Height - Convert.ToInt32(Feature_defect[POSITION_FEATURE_NAME_Y]?.ToString())) / picturebox_ratio_y);
-                        else
-                            Swap_Y_POS = (int)(Convert.ToInt32(Feature_defect[POSITION_FEATURE_NAME_Y]?.ToString()) / picturebox_ratio_y);
-                        System.Drawing.Point point = new System.Drawing.Point(Swap_X_POS, Swap_Y_POS);
-                        Defect_Position.Add(point);
+                        {
+                            Defect_Position.Add(new System.Drawing.Point(-1, -1));
+                        }
 
                         //여기는 judge부
-                        string Defect_position_judge = Feature_defect["DEFECT_JUDGE"].ToString();
-                        if (Defect_position_judge == "OK")
+                        object defectJudgeObj;
+                        string Defect_position_judge = Feature_defect.TryGetValue("DEFECT_JUDGE", out defectJudgeObj)
+                            ? Convert.ToString(defectJudgeObj)
+                            : string.Empty;
+                        if (string.Equals(Defect_position_judge, "OK", StringComparison.OrdinalIgnoreCase))
                             Defect_Position_Judge.Add(true);
                         else
                             Defect_Position_Judge.Add(false);
@@ -1116,23 +1291,35 @@ namespace AMI_Manager.Forms.Main
                         header = line.Split(',');
                         continue;
                     }
-                    Dictionary<string, object> Feature_defect = new Dictionary<string, object>();
                     var values = line.Split(',');
-                    for (int i = 0; i < values.Length; i++)
-                    {
-                        //Feature_row[header[i]] = values[i].ToString();
-                        Feature_defect.Add(header[i], values[i]);
-                    }
+                    bool isRowStructureDifferent = header == null || values.Length != header.Length;
+                    Dictionary<string, object> Feature_defect = BuildFeatureRowFromCsv(header, values);
                     Feature_row_post.Add(Feature_defect);
                     //System.Drawing.Point point = new System.Drawing.Point((int)(Convert.ToInt32(Feature_defect["PIXEL_Y"]?.ToString()) / picturebox_ratio_x), (int)(Convert.ToInt32(Feature_defect["PIXEL_X"]?.ToString()) / picturebox_ratio_y));
                     if (View_mode == 2)
                     {
-                        System.Drawing.Point point = new System.Drawing.Point((int)(Convert.ToInt32(Feature_defect[POSITION_FEATURE_NAME_X]?.ToString()) / picturebox_ratio_x), (int)(Convert.ToInt32(Feature_defect[POSITION_FEATURE_NAME_Y]?.ToString()) / picturebox_ratio_y));
-                        Defect_Position.Add(point);
+                        int rawX;
+                        int rawY;
+                        bool canDrawPoint = !isRowStructureDifferent
+                            && TryGetFeatureIntValue(Feature_defect, POSITION_FEATURE_NAME_X, out rawX)
+                            && TryGetFeatureIntValue(Feature_defect, POSITION_FEATURE_NAME_Y, out rawY);
+
+                        if (canDrawPoint)
+                        {
+                            System.Drawing.Point point = new System.Drawing.Point((int)(rawX / picturebox_ratio_x), (int)(rawY / picturebox_ratio_y));
+                            Defect_Position.Add(point);
+                        }
+                        else
+                        {
+                            Defect_Position.Add(new System.Drawing.Point(-1, -1));
+                        }
 
                         //여기는 judge부
-                        string Defect_position_judge = Feature_defect["DEFECT_JUDGE"].ToString();
-                        if (Defect_position_judge == "OK")
+                        object defectJudgeObj;
+                        string Defect_position_judge = Feature_defect.TryGetValue("DEFECT_JUDGE", out defectJudgeObj)
+                            ? Convert.ToString(defectJudgeObj)
+                            : string.Empty;
+                        if (string.Equals(Defect_position_judge, "OK", StringComparison.OrdinalIgnoreCase))
                             Defect_Position_Judge.Add(true);
                         else
                             Defect_Position_Judge.Add(false);
@@ -2783,8 +2970,9 @@ namespace AMI_Manager.Forms.Main
                 }
 
                 string serialNumber = selectedItem.SubItems[1].Text;
+                string selectedInspectionTime = selectedItem.SubItems.Count > 3 ? selectedItem.SubItems[3].Text : string.Empty;
                 string vpNumberText = selectedItem.SubItems[6].Text;
-                if (string.IsNullOrEmpty(serialNumber) || string.IsNullOrEmpty(vpNumberText))
+                if (string.IsNullOrEmpty(serialNumber) || string.IsNullOrEmpty(selectedInspectionTime) || string.IsNullOrEmpty(vpNumberText))
                 {
                     continue;
                 }
@@ -2800,7 +2988,9 @@ namespace AMI_Manager.Forms.Main
                     }
 
                     string vpSuffix = vpnum.Substring(vpnum.Length - 1);
-                    if (inspectionDataList[i].SerialNumber == serialNumber && vpSuffix == selectedVpSuffix)
+                    if (inspectionDataList[i].SerialNumber == serialNumber
+                        && inspectionDataList[i].InspectionTime == selectedInspectionTime
+                        && vpSuffix == selectedVpSuffix)
                     {
                         sourceIndex = i;
                         break;
@@ -2829,7 +3019,13 @@ namespace AMI_Manager.Forms.Main
                     continue;
                 }
 
-                PanelSimulationFilePath.Add(simulationPath);
+                string matchedSimulationFile = ResolveSimulationJsonByInspectionTime(simulationPath, selectedInspectionTime);
+                if (string.IsNullOrEmpty(matchedSimulationFile))
+                {
+                    continue;
+                }
+
+                PanelSimulationFilePath.Add(matchedSimulationFile);
                 targetListViewIndices.Add(selectedItem.Index);
             }
 
@@ -4088,6 +4284,11 @@ namespace AMI_Manager.Forms.Main
 
             for (int i = 0; i < Defect_Position.Count(); i++)
             {
+                if (!IsDefectPointDrawable(Defect_Position[i]))
+                {
+                    continue;
+                }
+
                 if (IsWithinRange(Defect_Position[i], mousePosition, 5))
                 {
                     //현재 거리가 5pixel
@@ -4240,6 +4441,28 @@ namespace AMI_Manager.Forms.Main
         private void LV_PANEL_LIST_DrawItem(object sender, DrawListViewItemEventArgs e)
         {
             e.DrawDefault = true;
+        }
+
+        private void LV_PANEL_LIST_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Control && e.KeyCode == Keys.A)
+            {
+                LV_PANEL_LIST.BeginUpdate();
+                try
+                {
+                    for (int i = 0; i < LV_PANEL_LIST.Items.Count; i++)
+                    {
+                        LV_PANEL_LIST.Items[i].Selected = true;
+                    }
+                }
+                finally
+                {
+                    LV_PANEL_LIST.EndUpdate();
+                }
+
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+            }
         }
 
         private void CB_SIMULATION_PANEL_CheckedChanged(object sender, EventArgs e)
@@ -4534,6 +4757,16 @@ namespace AMI_Manager.Forms.Main
 
                     for (int i = 0; i < count; i++)
                     {
+                        if (i >= Defect_Position.Count || i >= Defect_Position_Judge.Count)
+                        {
+                            continue;
+                        }
+
+                        if (!IsDefectPointDrawable(Defect_Position[i]))
+                        {
+                            continue;
+                        }
+
                         if (Judge_mode == 0)//ok,ng둘다
                         {
 
