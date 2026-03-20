@@ -155,6 +155,7 @@ namespace AMI_Manager.Forms.Main
         private DateTime EndDate { get { return _searchState.EndDate; } set { _searchState.EndDate = value; } }
         private List<string> matchingFiles { get { return _searchState.MatchingFiles; } }
         private List<InspectionData> inspectionDataList { get { return _searchState.InspectionDataList; } }
+        private Dictionary<string, string> panelModelByIdentity { get { return _searchState.PanelModelByIdentity; } }
         private bool Panel_ID_Search { get { return _searchState.PanelIdSearch; } set { _searchState.PanelIdSearch = value; } }
 
         //변수정리 Defect Search
@@ -361,12 +362,17 @@ namespace AMI_Manager.Forms.Main
 
             if (vp_info_list.Count > 0)
             {
+                CBB_RECIPE.Items.Add("ALL");
                 string[] recipe = GetSearchFolder_only(vp_info_list[0].Path_Vp_Recipe);
                 for (int i = 0; i < recipe.Length; i++)
                     CBB_RECIPE.Items.Add(Path.GetFileName(recipe[i]));
             }
 
             CBB_RECIPE.DropDownStyle = ComboBoxStyle.DropDownList;
+            if (CBB_RECIPE.Items.Count > 0)
+            {
+                CBB_RECIPE.SelectedIndex = 0;
+            }
         }
 
         private void InitializeUiDefaults()
@@ -634,6 +640,19 @@ namespace AMI_Manager.Forms.Main
             {
                 MessageBox.Show("선택된 패널 정보를 찾을 수 없습니다.");
                 return;
+            }
+
+            if (string.Equals(CBB_RECIPE.Text, "ALL", StringComparison.OrdinalIgnoreCase)
+                && LV_PANEL_LIST.SelectedItems.Count > 0
+                && LV_PANEL_LIST.SelectedItems[0].SubItems.Count > 9)
+            {
+                string modelToken = LV_PANEL_LIST.SelectedItems[0].SubItems[9].Text;
+                if (!string.IsNullOrWhiteSpace(modelToken))
+                {
+                    Model_name = modelToken;
+                    LB_RECIPE.Text = Model_name;
+                    insp_info.Recipe_Model = vp_info_list[0].Path_Vp_Recipe + "\\" + Model_name;
+                }
             }
 
             //해당 디펙을 상세하게 들어가기 위한 탭변경 초기화
@@ -1456,6 +1475,10 @@ namespace AMI_Manager.Forms.Main
             //모델네임 확인
             if (CB_RECIPE_WRITE.Checked) // 만약 직접입력창이 활성화되었을 경우
                 Model_name = TB_RECIPE.Text.ToString();
+            else if (string.Equals(CBB_RECIPE.Text, "ALL", StringComparison.OrdinalIgnoreCase))
+            {
+                Model_name = "ALL";
+            }
             else  //라디오버튼으로 나눠서 사용할때
             {
                 if (RB_RECIPE_FRONT.Checked) // front 인경우
@@ -1478,8 +1501,10 @@ namespace AMI_Manager.Forms.Main
                 bool useDefectFilter = CBB_DEFECT_NAME.SelectedIndex != 0;
                 string judgeFilter = CBB_JUDGE.Text;
                 string defectFilter = CBB_DEFECT_NAME.Text;
+                bool isRecipeAll = string.Equals(CBB_RECIPE.Text, "ALL", StringComparison.OrdinalIgnoreCase);
 
                 matchingFiles.Clear();
+                panelModelByIdentity.Clear();
 
                 for (int i = 0; i < vp_info_list.Count; i++)
                 {
@@ -1511,7 +1536,13 @@ namespace AMI_Manager.Forms.Main
                     string logFilePath = matchingFiles[i];
                     string fileName = System.IO.Path.GetFileNameWithoutExtension(logFilePath);
                     string[] fileNameTokens = fileName.Split('_');
+                    string modelToken = fileNameTokens.Length > 1 ? fileNameTokens[1] : string.Empty;
                     string vpnum = fileNameTokens.Length > 2 ? fileNameTokens[2] : string.Empty;
+
+                    if (!isRecipeAll && !string.Equals(modelToken, Model_name, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
 
                     bool isHeader = true;
                     foreach (string line in File.ReadLines(logFilePath))
@@ -1540,6 +1571,16 @@ namespace AMI_Manager.Forms.Main
                         inspectionData.FinalJudgment = values[3];
                         inspectionData.ClassifyGroup = values[4];
                         inspectionData.Vpnum = vpnum;
+
+                        string panelIdentity = BuildPanelIdentityKey(
+                            inspectionData.SerialNumber,
+                            inspectionData.InspectionDate,
+                            inspectionData.InspectionTime,
+                            inspectionData.Vpnum);
+                        if (!panelModelByIdentity.ContainsKey(panelIdentity))
+                        {
+                            panelModelByIdentity.Add(panelIdentity, modelToken);
+                        }
 
                         DateTime SelectDate_CHECK = ParseHHMMSS(inspectionData.InspectionDate, inspectionData.InspectionTime);
                         if (SelectDate_CHECK < StartDate_CHECK || EndDate_CHECK < SelectDate_CHECK)
@@ -1708,9 +1749,25 @@ namespace AMI_Manager.Forms.Main
             item.SubItems.Add(data.FinalJudgment);
             item.SubItems.Add(data.ClassifyGroup);
             item.SubItems.Add(data.Vpnum);
+            string panelIdentity = BuildPanelIdentityKey(data.SerialNumber, data.InspectionDate, data.InspectionTime, data.Vpnum);
+            string modelToken;
+            if (!panelModelByIdentity.TryGetValue(panelIdentity, out modelToken))
+            {
+                modelToken = string.Empty;
+            }
             item.SubItems.Add("");
             item.SubItems.Add("");
+            item.SubItems.Add(modelToken);
             return item;
+        }
+
+        private static string BuildPanelIdentityKey(string serialNumber, string inspectionDate, string inspectionTime, string vpnum)
+        {
+            return string.Join("|",
+                serialNumber ?? string.Empty,
+                inspectionDate ?? string.Empty,
+                inspectionTime ?? string.Empty,
+                vpnum ?? string.Empty);
         }
 
 
@@ -5040,6 +5097,7 @@ namespace AMI_Manager.Forms.Main
             public DateTime EndDate;
             public List<string> MatchingFiles = new List<string>();
             public List<InspectionData> InspectionDataList = new List<InspectionData>();
+            public Dictionary<string, string> PanelModelByIdentity = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             public bool PanelIdSearch = true;
             public List<(string FolderName, string FolderPath)> MatchingFolders = new List<(string FolderName, string FolderPath)>();
         }
